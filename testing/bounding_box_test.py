@@ -2,6 +2,9 @@ import pyrealsense2 as rs
 import numpy as np
 import cv2
 
+
+
+# Choose either a red or blue mask
 def red_mask(hsv_image):
     lower_red = np.array([0, 100, 150])
     upper_red = np.array([5, 255, 255])
@@ -22,14 +25,13 @@ def blue_mask(hsv_image):
 
 # Function to find and draw a bounding box around the red object
 def find_and_draw_object(image, colour_of_leds):
-    
-    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    
-    if colour_of_leds == 'blue':
-        colour_mask = blue_mask(hsv_image)
-    if colour_of_leds == 'red':
-        colour_mask = red_mask(hsv_image)
+    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)  # Added the missing closing parenthesis
 
+    if colour_of_leds == 'blue':
+        colour_mask = blue_mask(hsv_image)  # Assuming you have a function for blue_mask
+
+    if colour_of_leds == 'red':
+        colour_mask = red_mask(hsv_image)  # Assuming you have a function for red_mask
 
     # Find contours in the mask
     contours, _ = cv2.findContours(colour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -40,6 +42,16 @@ def find_and_draw_object(image, colour_of_leds):
         x, y, w, h = cv2.boundingRect(largest_contour)
         cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)  # Draw a green bounding box
     return colour_mask
+
+# Define a function to find the distance between two points in the depth frame
+def find_distance(depth_frame, x1, y1, x2, y2):
+    depth1 = depth_frame[y1, x1]
+    depth2 = depth_frame[y2, x2]
+    if depth1 > 0 and depth2 > 0:
+        distance = abs(depth1 - depth2) / 10.0  # Convert depth from mm to cm
+        return distance
+    return None
+
 # Create the RealSense pipeline and start it
 pipe = rs.pipeline()
 cfg = rs.config()
@@ -56,12 +68,33 @@ while True:
     color_image = np.asanyarray(color_frame.get_data())
     depth_cm = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.5), cv2.COLORMAP_JET)
 
-    colour_mask = find_and_draw_object(color_image, "blue")  # Call the function to find and draw the bounding box
-    masked_color_image = cv2.bitwise_and(color_image, color_image, mask=colour_mask)
+    # Detect and draw bounding boxes around red objects
+    red_mask = find_and_draw_object(color_image, "red")
+
+    # Find contours in the red mask
+    contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Initialize lists to store the centers of red objects
+    red_object_centers = []
+
+    # Draw bounding boxes and find centers
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        cv2.rectangle(color_image, (x, y), (x + w, y + h), (0, 255, 0), 2)  # Draw a green bounding box
+        center_x = x + w // 2
+        center_y = y + h // 2
+        red_object_centers.append((center_x, center_y))
+
+    # Measure the distance between two red objects (assuming there are two objects)
+    if len(red_object_centers) == 2:
+        x1, y1 = red_object_centers[0]
+        x2, y2 = red_object_centers[1]
+        distance = find_distance(depth_frame, x1, y1, x2, y2)
+        if distance is not None:
+            print(f"Distance between red objects: {distance} cm")
 
     cv2.imshow('rgb', color_image)
     cv2.imshow('depth', depth_cm)
-    #cv2.imshow('rgb', masked_color_image)q
 
     if cv2.waitKey(1) == ord('q'):
         break
