@@ -46,6 +46,12 @@ try:
         cv2.imshow('RealSense', images)
         cv2.waitKey(1)
 
+        # Check for the 'q' key
+        key = cv2.waitKey(1)
+        if key == ord('q'):
+            break
+
 finally:
     # Stop streaming
     pipeline.stop()
+    cv2.destroyAllWindows()
