@@ -21,17 +21,16 @@ point_cloud = rs.pointcloud()
 
 print("[INFO] loading model...")
 PATH_TO_CKPT = "realsense_team/models/frozen_inference_graph.pb"
-# download model from: https://github.com/opencv/opencv/wiki/TensorFlow-Object-Detection-API#run-network-in-opencv
-
 # Load the Tensorflow model into memory.
-detection_graph = tf.Graph()
+detection_graph = tf.compat.v1.Graph()
 with detection_graph.as_default():
     od_graph_def = tf.compat.v1.GraphDef()
-    with tf.compat.v1.gfile.GFile(PATH_TO_CKPT, 'rb') as fid:
+    with tf.io.gfile.GFile(PATH_TO_CKPT, 'rb') as fid:
         serialized_graph = fid.read()
         od_graph_def.ParseFromString(serialized_graph)
         tf.compat.v1.import_graph_def(od_graph_def, name='')
     sess = tf.compat.v1.Session(graph=detection_graph)
+
 
 # Input tensor is the image
 image_tensor = detection_graph.get_tensor_by_name('image_tensor:0')
@@ -71,9 +70,7 @@ while True:
     #print("[INFO] drawing bounding box on detected objects...")
     #print("[INFO] each detected object has a unique color")
 
-    print(num)
-
-    for idx in range(int(num)):
+    for idx in range(int(num[0])):
         class_ = classes[idx]
         score = scores[idx]
         box = boxes[idx]
