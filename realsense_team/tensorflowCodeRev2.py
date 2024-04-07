@@ -5,22 +5,23 @@ import tensorflow as tf
 
 W = 848
 H = 480
+
 # Configure depth and color streams
 pipeline = rs.pipeline()
 config = rs.config()
-config.enable_stream(rs.stream.color, W, H, rs.format.bgr8, 30)
 config.enable_stream(rs.stream.depth, W, H, rs.format.z16, 30)
+config.enable_stream(rs.stream.color, W, H, rs.format.bgr8, 30)
 
 
-print("[INFO] Starting streaming...")
+print("[INFO] start streaming...")
 pipeline.start(config)
-print("[INFO] Camera ready.")
 
 aligned_stream = rs.align(rs.stream.color) # alignment between color and depth
 point_cloud = rs.pointcloud()
 
-print("[INFO] Loading model...")
+print("[INFO] loading model...")
 PATH_TO_CKPT = "realsense_team/models/frozen_inference_graph.pb"
+# download model from: https://github.com/opencv/opencv/wiki/TensorFlow-Object-Detection-API#run-network-in-opencv
 
 # Load the Tensorflow model into memory.
 detection_graph = tf.Graph()
@@ -44,59 +45,159 @@ detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
 # Number of objects detected
 num_detections = detection_graph.get_tensor_by_name('num_detections:0')
 # code source of tensorflow model loading: https://www.geeksforgeeks.org/ml-training-image-classifier-using-tensorflow-object-detection-api/
-print("[INFO] Model loaded.")
-colors_hash = {}
+
 while True:
     frames = pipeline.wait_for_frames()
-    color_frame = frames.get_color_frame()
-
-    ##############Depth#############
     frames = aligned_stream.process(frames)
     depth_frame = frames.get_depth_frame()
+    color_frame = frames.get_color_frame()
     points = point_cloud.calculate(depth_frame)
     verts = np.asanyarray(points.get_vertices()).view(np.float32).reshape(-1, W, 3)  # xyz
-    ################################
 
     # Convert images to numpy arrays
     color_image = np.asanyarray(color_frame.get_data())
-    scaled_size = (color_frame.width, color_frame.height)
+    scaled_size = (int(W), int(H))
     # expand image dimensions to have shape: [1, None, None, 3]
     # i.e. a single-column array, where each item in the column has the pixel RGB value
     image_expanded = np.expand_dims(color_image, axis=0)
     # Perform the actual detection by running the model with the image as input
     (boxes, scores, classes, num) = sess.run([detection_boxes, detection_scores, detection_classes, num_detections],
-                                                feed_dict={image_tensor: image_expanded})
+                                             feed_dict={image_tensor: image_expanded})
 
     boxes = np.squeeze(boxes)
     classes = np.squeeze(classes).astype(np.int32)
     scores = np.squeeze(scores)
 
+    #print("[INFO] drawing bounding box on detected objects...")
+    #print("[INFO] each detected object has a unique color")
 
     for idx in range(int(num)):
         class_ = classes[idx]
         score = scores[idx]
         box = boxes[idx]
-        print(" [DEBUG] class : ", class_, "idx : ", idx, "num : ", num)
+        #print(" [DEBUG] class : ", class_, "idx : ", idx, "num : ", num)
 
-        
-        if class_ not in colors_hash:
-            colors_hash[class_] = tuple(np.random.choice(range(256), size=3))
-        
-        if score > 0.7:
-            left = int(box[1] * color_frame.width)
-            top = int(box[0] * color_frame.height)
-            right = int(box[3] * color_frame.width)
-            bottom = int(box[2] * color_frame.height)
-            
-            p1 = (left, top)
-            p2 = (right, bottom)
+        if score > 0.8 and class_ == 1: # 1 for human
+            left = box[1] * W   # Normalize left boundary to pixel position
+            top = box[0] * H    # Normalize top boundary to pixel position
+            right = box[3] * W  # Normalize right boundary to pixel position
+            bottom = box[2] * H # Normalize bottom boundary to pixel position
+
+            width = right - left
+            height = bottom - top
+            bbox = (int(left), int(top), int(width), int(height))
+
+            #p1 = (int(left), int(top))       # Top-left corner
+            #p2 = (int(right), int(bottom))   # Bottom-right corner
+            p1 = (int(bbox[0]), int(bbox[1]))
+            p2 = (int(bbox[0] + bbox[2]), int(bbox[1] + bbox[3]))
+
+
             # draw box
-            r, g, b = colors_hash[class_]
-            cv2.rectangle(color_image, p1, p2, (int(r), int(g), int(b)), 2, 1)
+            cv2.rectangle(color_image, p1, p2, (255,0,0), 2, 1)
+            # Insert the new code snippet here
+            points_3d = []
+            step = 2
 
+            for y in range(int(top), int(bottom), step):
+                for x in range(int(left), int(right), step):
+                    depth = depth_frame.get_distance(x, y)
+                    if depth > 0:  # Valid depth data
+                        point_3d = rs.rs2_deproject_pixel_to_point(
+                            depth_frame.profile.as_video_stream_profile().intrinsics, [x, y], depth)
+                        points_3d.append(point_3d)
+
+            if points_3d:
+                points_3d = np.array(points_3d)
+                center_3d = np.mean(points_3d, axis=0) #this is the actual 3d center in real world
+                center_2d = rs.rs2_project_point_to_pixel(
+                    depth_frame.profile.as_video_stream_profile().intrinsics, center_3d)
+                center_2d = (int(center_2d[0]), int(center_2d[1]))
+                cv2.circle(color_image, center_2d, 5, (0, 255, 0), -1)  # Draw center
+
+                # Optional: Display 3D center coordinates
+                cv2.putText(color_image, "3D Center: {:.2f}, {:.2f}, {:.2f}".format(*center_3d),
+                            (50, 50), cv2.FONT_HERSHEY_PLAIN, 1, (255, 255, 255), 1)
+
+            ##############################OLD CODE#######################################
+            # # x,y,z of bounding box
+            # obj_points = verts[int(bbox[1]):int(bbox[1] + bbox[3]), int(bbox[0]):int(bbox[0] + bbox[2])].reshape(-1, 3)
+            # zs = obj_points[:, 2]
+
+            # z = np.median(zs)
+
+            # ys = obj_points[:, 1]
+            # ys = np.delete(ys, np.where(
+            #     (zs < z - 1) | (zs > z + 1)))  # take only y for close z to prevent including background
+
+            # xs = obj_points[:, 0]
+            # xs = np.delete(xs, np.where(
+            #     (zs < z - 1) | (zs > z + 1))) 
+
+            # # Calculate minimum and maximum Y and X coordinates
+            # my = np.amin(ys, initial=1)
+            # My = np.amax(ys, initial=-1)
+
+            # mx = np.amin(xs, initial=1)
+            # Mx = np.amax(xs, initial=-1)
+
+            # # Calculate Height and Width and Center of Box
+            # height = (My - my)  # add next to rectangle print of height using cv library
+            # width = (Mx - mx)
+
+            # # Format Height and Width for Displayd
+            # height = float("{:.2f}".format(height))
+            # width = float("{:.2f}".format(width))
+
+            # # Prepare Text for Display
+            # height_txt = str(height) + "[H m]"
+            # width_txt = str(width) + "[W m]"
+            # center_txt = "+"
+
+
+            # # Print Dimensions to Console
+            # #print("[INFO] object height is: ", height, "[m]")
+            # #print("[INFO] object width is: ", width, "[m]")
+
+            # # Write Height and Width Text on Image
+            # font = cv2.FONT_HERSHEY_SIMPLEX
+
+            # bottomLeftCornerOfTextHeight = (p1[0], p1[1] + 20)
+            # bottomLeftCornerOfTextWidth = (p1[0], p1[1] + 40)
+
+
+            #####################################################################
+
+            #fullImageCenterX = int(center[0])
+            #fullImageCenterY = int(center[1])
+            #centerOfBox = (p1[0] + centerX,p1[1] + centerY) 
+
+            # Draw a circle at the center point for visual verification
+            #cv2.circle(color_image, (fullImageCenterX, fullImageCenterY), 5, (0, 0, 255), -1)  # Red dot
+            #cv2.circle(color_image, (centerX, centerY), 10, (0, 0, 255), -1)  # Red dot
+
+            # Adding text to the bounding box 
+            fontScale = 0.5
+            fontColor = (0, 255, 0) # red colour
+            lineType = 2
+            # cv2.putText(color_image, middle_txt,
+            #             bottomLeftCornerOfTextHeight,
+            #             font,
+            #             fontScale,
+            #             fontColor,
+            #             lineType)
+
+            # cv2.putText(color_image, width_txt,
+            #             bottomLeftCornerOfTextWidth,
+            #             font,
+            #             fontScale,
+            #             fontColor,
+            #             lineType)
+
+    # Show images
     cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
     cv2.imshow('RealSense', color_image)
     cv2.waitKey(1)
 
-print("[INFO] stop streaming ...")
+# Stop streaming
 pipeline.stop()
