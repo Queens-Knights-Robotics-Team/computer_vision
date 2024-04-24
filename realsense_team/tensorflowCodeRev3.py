@@ -20,7 +20,10 @@ aligned_stream = rs.align(rs.stream.color) # alignment between color and depth
 point_cloud = rs.pointcloud()
 
 print("[INFO] loading model...")
-PATH_TO_CKPT = "realsense_team/models/frozen_inference_graph.pb"
+#PATH_TO_CKPT = "/realsense_team/models/frozen_inference_graph.pb"
+#PATH_TO_CKPT = "/home/daniel/QKRT2024/computer_vision/realsense_team/models/frozen_inference_graph.pb"
+
+
 # Load the Tensorflow model into memory.
 detection_graph = tf.compat.v1.Graph()
 with detection_graph.as_default():
