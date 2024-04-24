@@ -70,62 +70,61 @@ while True:
     classes = np.squeeze(classes).astype(np.int32)
     scores = np.squeeze(scores)
 
-    #print("[INFO] drawing bounding box on detected objects...")
-    #print("[INFO] each detected object has a unique color")
+    # Initialize variables to track the closest box and its depth
+    closest_box_depth = float('inf')
+    closest_box_center_3d = None
 
     for idx in range(int(num[0])):
+        # Extract class, score, and box coordinates
         class_ = classes[idx]
         score = scores[idx]
         box = boxes[idx]
-        print(box)
-        #print(" [DEBUG] class : ", class_, "idx : ", idx, "num : ", num)
-
+        
+        # Check if the detection is a human and has a high enough confidence score
         if score > 0.85 and class_ == 1: # 1 for human
-            left = box[1] * W   # Normalize left boundary to pixel position
-            top = box[0] * H    # Normalize top boundary to pixel position
-            right = box[3] * W  # Normalize right boundary to pixel position
-            bottom = box[2] * H # Normalize bottom boundary to pixel position
+            # Extract bounding box coordinates
+            left = box[1] * W
+            top = box[0] * H
+            right = box[3] * W
+            bottom = box[2] * H
 
-            width = right - left
-            height = bottom - top
-            bbox = (int(left), int(top), int(width), int(height))
-
-            #p1 = (int(left), int(top))       # Top-left corner
-            #p2 = (int(right), int(bottom))   # Bottom-right corner
-            p1 = (int(bbox[0]), int(bbox[1]))
-            p2 = (int(bbox[0] + bbox[2]), int(bbox[1] + bbox[3]))
-
-
-            # draw box
-            cv2.rectangle(color_image, p1, p2, (255,0,0), 2, 1)
-            # Insert the new code snippet here
-            points_3d = []
-            step = 2
-
+            # Calculate the depth of the box by averaging depth values within the box
+            box_depth_sum = 0
+            num_pixels = 0
+            step = 2  # Pixel step for depth calculation, increase later *************************************
             for y in range(int(top), int(bottom), step):
                 for x in range(int(left), int(right), step):
+                    # Retrieve depth value for the pixel (x, y)
                     depth = depth_frame.get_distance(x, y)
                     if depth > 0:  # Valid depth data
-                        point_3d = rs.rs2_deproject_pixel_to_point(
-                            depth_frame.profile.as_video_stream_profile().intrinsics, [x, y], depth)
-                        points_3d.append(point_3d)
+                        box_depth_sum += depth
+                        num_pixels += 1
+            
+            if num_pixels > 0:
+                box_depth_avg = box_depth_sum / num_pixels
+                # Check if this box is closer than the current closest box
+                if box_depth_avg < closest_box_depth:
+                    closest_box_depth = box_depth_avg
+                    # Calculate 3D center of the box
+                    center_3d = rs.rs2_deproject_pixel_to_point(
+                        depth_frame.profile.as_video_stream_profile().intrinsics, [(left + right) / 2, (top + bottom) / 2], closest_box_depth)
+                    closest_box_center_3d = center_3d
 
-            if points_3d:
-                points_3d = np.array(points_3d)
-                center_3d = np.mean(points_3d, axis=0) #this is the actual 3d center in real world
-                center_2d = rs.rs2_project_point_to_pixel(
-                    depth_frame.profile.as_video_stream_profile().intrinsics, center_3d)
-                center_2d = (int(center_2d[0]), int(center_2d[1]))
-                cv2.circle(color_image, center_2d, 5, (0, 255, 0), -1)  # Draw center
+    # Draw the 3D center of the closest box if it exists
+    if closest_box_center_3d is not None:
+        # Draw a circle at the 3D center
+        center_2d = rs.rs2_project_point_to_pixel(
+            depth_frame.profile.as_video_stream_profile().intrinsics, closest_box_center_3d)
+        center_2d = (int(center_2d[0]), int(center_2d[1]))
+        cv2.circle(color_image, center_2d, 5, (0, 255, 0), -1)  # Draw center
 
-                # Optional: Display 3D center coordinates
-                cv2.putText(color_image, "3D Center: {:.2f}, {:.2f}, {:.2f}".format(*center_3d),
-                            (50, 50), cv2.FONT_HERSHEY_PLAIN, 1, (255, 255, 255), 1)
+        # Optional: Display 3D center coordinates
+        cv2.putText(color_image, "3D Center: {:.2f}, {:.2f}, {:.2f}".format(*closest_box_center_3d),
+                    (50, 50), cv2.FONT_HERSHEY_PLAIN, 1, (255, 255, 255), 1)
+        # Draw bounding box
+        cv2.rectangle(color_image, (int(left), int(top)), (int(right), int(bottom)), (255,0,0), 2, 1)
 
     # Show images
     cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
     cv2.imshow('RealSense', color_image)
     cv2.waitKey(1)
-
-# Stop streaming
-pipeline.stop()
